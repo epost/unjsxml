@@ -88,9 +88,8 @@ function parseSync(xmlStr) {
         .map(node => {
             switch (node.name()) {
                 case "text": return node.text(); break;
-                // case "wiki":   return "\n/**\n" + node.text() + "\n*/\n"; break;
-                case "wiki":   return wikiTextToComment(node.text()); break;
-                default:       return "";
+                case "wiki": return wikiTextToComment(node.text()); break;
+                default:     return "";
             };
         });
 
