@@ -6,56 +6,85 @@ var mkdirp   = require('mkdirp');
 var libxmljs = require('libxmljs');
 var R        = require('ramda');
 
-const sourceRootDir    = path.dirname(process.argv[2]),
-      sourceEntryPoint = path.basename(process.argv[2]),
+const projectRootDir   = process.argv[2],
       outDir           = process.argv[3],
-      stripExtensions  = filename => filename.split(".")[0];
-
+      sourceEntryPoint = "xsltforms.js.xml",
+      sourceRootDir    = projectRootDir + path.sep + "src",
+      configFile       = projectRootDir + path.sep + "txs" + path.sep + "cm_config.xml",
+      nsUri            = { cm: "http://www.agencexml.com/cm" },
+      stripExtensions  = filename => filename.split(".")[0],
+      cons             = (x, xs) => R.concat([x], xs),
+      fixFileName = f => outDir + path.sep + f.replace(/\.js\.xml/g, '.js');
 
 (function main() {
-    console.log("root source file :", sourceRootDir + "/" + sourceEntryPoint);
-    console.log("target dir       :", outDir);
+    console.error("root source file:", sourceRootDir + path.sep + sourceEntryPoint);
+    console.error("unpacking .js.xml to .js source files in:", outDir);
+
+    const configProperties = parseConfigFile(configFile);
+    // console.log('config:\n\n', configProperties);
 
     // analyse imports and write .js files
-    const imports = writeJsFilesRecursive({ parent: null, child: sourceEntryPoint});
+    const importsTree = writeJsFilesRecursive(configProperties)(sourceEntryPoint);
+
+    console.error("imports in order:");
+    dumpImportsRecursive_(importsTree);
 
     // create DOT graph of imports
-    fs.writeFileSync(outDir + "/" + "imports.dot", importsToGraphViz(imports));
+    // TODO if we still want the DOT graph, we need to turn this tree back into an adjacency list like we had before
+    // fs.writeFileSync(outDir + path.sep + "imports.dot", importsToGraphViz(imports));
 })();
 
 
-function writeJsFilesRecursive(pair) {
+/**
+ * @param pc '{ importPairs :: [{ parent :: Path, child :: Path}],
+ *              imports     :: [Path],
+ *              sourceText  :: [String]
+ *            } where Path = String'
+ */
+function dumpImportsRecursive_(pc) {
+    R.forEach(dumpImportsRecursive_, pc.children);
+    console.log(fixFileName(pc.parent));
+}
 
-    const sourceFileRelativeToSourceRoot = pair.child;
+// curried
+function writeJsFilesRecursive(configProperties) {
+    return function(sourceFileRelativeToSourceRoot) {
 
-    const sourceSubDir          = path.dirname(sourceFileRelativeToSourceRoot),
-          sourceBaseName        = path.basename(sourceFileRelativeToSourceRoot),
-          sourcePathAndFileName = sourceSubDir + "/" + sourceBaseName,
-          outFile               = outDir + "/" + sourceSubDir + "/" + stripExtensions(sourceBaseName) + '.js';
+        const sourceSubDir          = path.dirname(sourceFileRelativeToSourceRoot),
+              sourceBaseName        = path.basename(sourceFileRelativeToSourceRoot),
+              sourcePathAndFileName = sourceSubDir + path.sep + sourceBaseName,
+              outFile               = outDir + path.sep + sourceSubDir + path.sep + stripExtensions(sourceBaseName) + '.js';
 
-    if (0) {
-        console.log("writeJsFilesRecursive:");
-        console.log("sourceRootDir                  = ", sourceRootDir);
-        console.log("sourceSubDir                   = ", sourceSubDir);
-        console.log("sourceBaseName                 = ", sourceBaseName);
-        console.log("sourceFileRelativeToSourceRoot = ", sourceFileRelativeToSourceRoot);
-        console.log("outFile                        = ", outFile);
-        console.log("sourcePathAndFileName          = ", sourcePathAndFileName);
-        console.log("");
+        if (0) {
+            console.log("writeJsFilesRecursive:");
+            console.log("sourceRootDir                  = ", sourceRootDir);
+            console.log("sourceSubDir                   = ", sourceSubDir);
+            console.log("sourceBaseName                 = ", sourceBaseName);
+            console.log("sourceFileRelativeToSourceRoot = ", sourceFileRelativeToSourceRoot);
+            console.log("outFile                        = ", outFile);
+            console.log("sourcePathAndFileName          = ", sourcePathAndFileName);
+            console.log("");
+        };
+
+        const parsed = parseXmlJsFile(configProperties, sourcePathAndFileName);
+
+        mkdirp.sync(path.dirname(outFile));
+
+        fs.writeFile(outFile, parsed.sourceFragments.join(''), function(err) {
+            if (err) { throw err; }
+            // console.log("saved: " + outFile);
+        });
+
+        return { parent:   sourcePathAndFileName
+               , children: R.map(R.compose(writeJsFilesRecursive(configProperties), path => sourceSubDir + path.sep + path), parsed.imports)
+               };
     };
+}
 
-    const parsed = parseXmlJsFile(sourcePathAndFileName);
-
-    mkdirp.sync(path.dirname(outFile));
-
-    fs.writeFile(outFile, parsed.sourceFragments.join(''), function(err) {
-        if (err) { throw err; }
-        // console.log("saved: " + outFile);
-    });
-
-    // TODO adding the subdir should probably be done in the other function
-    const importsQPairs = R.map(pc => ({ parent: pc.parent, child: sourceSubDir + "/" + pc.child }), parsed.importPairs);
-    return R.concat(importsQPairs, R.flatten(R.map(writeJsFilesRecursive, importsQPairs)));
+function parseConfigFile(file) {
+    const xmlBuf = fs.readFileSync(file);
+    const doc = libxmljs.parseXml(xmlBuf.toString(), { nocdata: true });
+    return R.mergeAll(R.map(node => R.objOf(node.name(), node.text()), doc.find("/cm:config/*", nsUri)));
 }
 
 /**
@@ -64,32 +93,32 @@ function writeJsFilesRecursive(pair) {
  *             sourceText  :: [String]
  *           }  where Path = String'
  */
-function parseXmlJsFile(sourceFile) {
-    const xmlBuf = fs.readFileSync(sourceRootDir + "/" + sourceFile);
-    const parsed = parseSync(xmlBuf.toString());
+function parseXmlJsFile(configProperties, sourceFile) {
+    const xmlBuf = fs.readFileSync(sourceRootDir + path.sep + sourceFile);
+    const parsed = parseSync(configProperties, xmlBuf.toString());
     return R.merge({ importPairs: R.map(imported => ({ parent: sourceFile, child: imported }), parsed.imports) }, parsed);
 }
 
 
 /**
+ * @param   configProperties A map of the form '{ versionNumber: 123, license: "Lorem ipsum..." }'.
  * @return  '{ imports :: [Path], sourceText :: [String] } where Path = String'
  */
-function parseSync(xmlStr) {
+function parseSync(configProperties, xmlStr) {
 
     const doc = libxmljs.parseXml(xmlStr, { nocdata: true });
-
-    const nsUri = {cm: "http://www.agencexml.com/cm"};
 
     const imports = doc
         .find("cm:source/cm:import-components/@path", nsUri)
         .map(attr => attr.value());
 
-    const sourceFragments = doc.find("(cm:source/cm:wiki | cm:source/text())", nsUri)
+    const sourceFragments = doc.find("(cm:source/cm:wiki | cm:source/text() | cm:source/cm:value)", nsUri)
         .map(node => {
             switch (node.name()) {
-                case "text": return node.text(); break;
-                case "wiki": return wikiTextToComment(node.text()); break;
-                default:     return "";
+                case "text":  return node.text(); break;
+                case "wiki":  return wikiTextToComment(node.text()); break;
+                case "value": const valueIdentifier = node.attr("name").value(); return configProperties[valueIdentifier]; break;
+                default:      return "";
             };
         });
 

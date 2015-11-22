@@ -1,7 +1,11 @@
 # #+title:unjsxml
 
-Alain Couthures' [[https://github.com/AlainCouthures/xsltforms][xsltforms]] uses a custom ~.js.xml~ format for storing javascript source code, import dependencies and documentation. This tool converts such ~.js.xml~ files into plain ~.js~ files. It can also generate GraphViz DOT graphs of the imports relation. For more information, see the notes on the ~txs~ tool on the [[https://github.com/AlainCouthures/xsltforms][xsltforms]] README.
+Alain Couthures' [[https://github.com/AlainCouthures/xsltforms][xsltforms]] uses a custom ~.js.xml~ format for storing javascript source code, import dependencies and documentation. This tool converts such ~.js.xml~ files into plain ~.js~ files. For more information, see the notes on the ~txs~ tool on the [[https://github.com/AlainCouthures/xsltforms][xsltforms]] README.
 
 Basic usage:
 
-: node index.js /dev/3rdparty/xsltforms/src/xsltforms.js.xml /path-to-output-dir
+: node index.js /path/to/xsltforms /path/to/output/dir
+
+This will 'unpack' the ~.js.xml~ files to ~.js~ files in ~ /path/to/output/dir~ and write a list of imports to stdout that can be concatenated:
+
+: node index.js /path/to/xsltforms /path/to/output/dir | xargs cat > /path/to/output/dir/xsltforms.bundle.js
